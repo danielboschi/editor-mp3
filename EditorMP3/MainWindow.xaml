@@ -1,0 +1,78 @@
+<Window x:Class="Mp3Editor.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="clr-namespace:Mp3Editor.Controls"
+        Title="Editor de MP3" Icon="Assets/app.ico" Height="560" Width="1040" MinWidth="780" MinHeight="440"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI" FontSize="13" Background="#F4F4F6"
+        AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Arquivo -->
+        <DockPanel Grid.Row="0">
+            <Button x:Name="OpenButton" Content="📂  Abrir arquivo…" Click="OpenButton_Click" />
+            <Button x:Name="SaveButton" DockPanel.Dock="Right" Content="💾  Salvar como…"
+                    Style="{StaticResource PrimaryButton}" Click="SaveButton_Click" />
+            <TextBlock x:Name="FileNameText" VerticalAlignment="Center" Margin="8,0,8,6"
+                       FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                       Text="Nenhum arquivo aberto" />
+        </DockPanel>
+
+        <!-- Forma de onda -->
+        <Border Grid.Row="1" Margin="0,4,0,10" CornerRadius="6" ClipToBounds="True"
+                Background="#1E1E24" BorderBrush="#C8C8D0" BorderThickness="1">
+            <Grid>
+                <c:WaveformControl x:Name="Waveform" />
+                <TextBlock x:Name="HintText" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="#8A8A96" FontSize="15" IsHitTestVisible="False" TextAlignment="Center"
+                           Text="Abra um arquivo MP3 ou WAV, ou arraste-o para esta janela." />
+            </Grid>
+        </Border>
+
+        <!-- Corte -->
+        <WrapPanel Grid.Row="2">
+            <TextBlock Text="Início:" Style="{StaticResource Label}" Foreground="#1E9E62" />
+            <TextBox x:Name="StartBox" LostFocus="TimeBox_LostFocus" KeyDown="TimeBox_KeyDown"
+                     ToolTip="Formato mm:ss.mmm — pressione Enter para aplicar" />
+            <Button x:Name="StartHereButton" Content="Marcar início aqui" Click="StartHere_Click"
+                    ToolTip="Usa a posição que está tocando agora como início" />
+            <Rectangle Width="18" />
+            <TextBlock Text="Fim:" Style="{StaticResource Label}" Foreground="#D93C3C" />
+            <TextBox x:Name="EndBox" LostFocus="TimeBox_LostFocus" KeyDown="TimeBox_KeyDown"
+                     ToolTip="Formato mm:ss.mmm — pressione Enter para aplicar" />
+            <Button x:Name="EndHereButton" Content="Marcar fim aqui" Click="EndHere_Click"
+                    ToolTip="Usa a posição que está tocando agora como fim" />
+            <Button x:Name="ResetButton" Content="Desfazer corte" Click="Reset_Click" />
+        </WrapPanel>
+
+        <!-- Reprodução -->
+        <WrapPanel Grid.Row="3">
+            <Button x:Name="PlayResultButton" Content="▶  Ouvir resultado" Style="{StaticResource PrimaryButton}"
+                    Click="PlayResult_Click" ToolTip="Toca só o trecho que será salvo (Espaço)" />
+            <Button x:Name="PlayHeadButton" Content="▶  Primeiros 3 s" Click="PlayHead_Click"
+                    ToolTip="Confere como ficou o começo" />
+            <Button x:Name="PlayTailButton" Content="▶  Últimos 3 s" Click="PlayTail_Click"
+                    ToolTip="Confere como ficou o final" />
+            <Button x:Name="PlayOriginalButton" Content="▶  Ouvir original" Click="PlayOriginal_Click"
+                    ToolTip="Toca o arquivo inteiro, sem corte" />
+            <Button x:Name="PauseButton" Content="⏸  Pausar" Click="Pause_Click" />
+            <Button x:Name="StopButton" Content="⏹  Parar" Click="Stop_Click" />
+            <TextBlock x:Name="PositionText" VerticalAlignment="Center" Margin="6,0,0,6"
+                       FontFamily="Consolas" FontSize="14" />
+        </WrapPanel>
+
+        <!-- Status -->
+        <StackPanel Grid.Row="4" Margin="0,6,0,0">
+            <TextBlock x:Name="ResultText" FontWeight="SemiBold" />
+            <TextBlock x:Name="StatusText" Foreground="#606070" Margin="0,2,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+    </Grid>
+</Window>
