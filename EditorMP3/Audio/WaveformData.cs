@@ -1,49 +1,62 @@
-using NAudio.Wave;
-
 namespace Mp3Editor.Audio;
 
 /// <summary>Resumo do áudio (picos mínimos/máximos) para desenhar a forma de onda.</summary>
 public sealed class WaveformData
 {
+    private const int BucketsPerSecond = 400;
+
     public required float[] Min { get; init; }
     public required float[] Max { get; init; }
     public required double Duration { get; init; }
     public required int SampleRate { get; init; }
     public required int Channels { get; init; }
 
-    public static WaveformData Load(string path, int buckets)
+    /// <summary>
+    /// Lê o áudio inteiro. A duração é contada pelas amostras decodificadas, porque a
+    /// informada pelo arquivo pode ser só uma estimativa.
+    /// </summary>
+    public static WaveformData Load(AudioSource source)
     {
-        using var reader = new AudioFileReader(path);
-        int channels = reader.WaveFormat.Channels;
+        int channels = source.WaveFormat.Channels;
+        int rate = source.WaveFormat.SampleRate;
+        int samplesPerBucket = Math.Max(1, rate / BucketsPerSecond) * channels;
 
-        long totalFrames = Math.Max(1, reader.Length / sizeof(float) / channels);
-        long framesPerBucket = Math.Max(1, totalFrames / buckets);
-        int count = (int)Math.Ceiling(totalFrames / (double)framesPerBucket);
+        var min = new List<float>();
+        var max = new List<float>();
+        var buffer = new float[rate * channels];
+        float lo = 0, hi = 0;
+        int inBucket = 0;
+        long total = 0;
 
-        var min = new float[count];
-        var max = new float[count];
-
-        var buffer = new float[reader.WaveFormat.SampleRate * channels];
-        long frameIndex = 0;
         int read;
-        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+        while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
         {
+            total += read;
             for (int i = 0; i < read; i++)
             {
-                int bucket = (int)Math.Min(count - 1, (frameIndex + i / channels) / framesPerBucket);
                 float v = buffer[i];
-                if (v < min[bucket]) min[bucket] = v;
-                if (v > max[bucket]) max[bucket] = v;
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+                if (++inBucket < samplesPerBucket) continue;
+                min.Add(lo);
+                max.Add(hi);
+                lo = hi = 0;
+                inBucket = 0;
             }
-            frameIndex += read / channels;
         }
+        if (inBucket > 0)
+        {
+            min.Add(lo);
+            max.Add(hi);
+        }
+        if (total == 0) throw new InvalidOperationException("O arquivo não contém áudio.");
 
         return new WaveformData
         {
-            Min = min,
-            Max = max,
-            Duration = reader.TotalTime.TotalSeconds,
-            SampleRate = reader.WaveFormat.SampleRate,
+            Min = min.ToArray(),
+            Max = max.ToArray(),
+            Duration = total / channels / (double)rate,
+            SampleRate = rate,
             Channels = channels,
         };
     }

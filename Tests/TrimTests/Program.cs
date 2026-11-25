@@ -72,6 +72,105 @@ CheckDuration("WAV → MP3", wavToMp3, expected, 0.1);
 AudioTrimmer.Save(mp3, mp3ToMp3, 1, 3);
 CheckDuration("sobrescrever destino", mp3ToMp3, 2, 0.03);
 
+// ---------- Outros formatos de entrada ----------
+
+void CheckOther(string name, string source, AudioKind kind)
+{
+    Check($"{name}: reconhecido como {kind}", AudioSource.Detect(source) == kind, "");
+    using (var s = AudioSource.Open(source))
+    {
+        double d = WaveformData.Load(s).Duration;
+        Check($"{name}: abrir", Math.Abs(d - 10) < 0.15, $"duração={d:F3}s");
+    }
+    string toMp3 = Path.Combine(dir, name.Replace(' ', '-') + "-saida.mp3");
+    Console.WriteLine("   -> " + AudioTrimmer.Save(source, toMp3, start, end));
+    CheckDuration($"{name} → MP3", toMp3, expected, 0.1);
+    string toWav = Path.ChangeExtension(toMp3, ".wav");
+    Console.WriteLine("   -> " + AudioTrimmer.Save(source, toWav, start, end));
+    CheckDuration($"{name} → WAV", toWav, expected, 0.01);
+}
+
+string m4a = Path.Combine(dir, "tom.m4a"), wma = Path.Combine(dir, "tom.wma");
+using (var r = new WaveFileReader(wav)) MediaFoundationEncoder.EncodeToAac(r, m4a, 192000);
+using (var r = new WaveFileReader(wav)) MediaFoundationEncoder.EncodeToWma(r, wma, 192000);
+CheckOther("M4A", m4a, AudioKind.Other);
+CheckOther("WMA", wma, AudioKind.Other);
+
+// Extensão errada: o conteúdo é que vale.
+string fakeMp3 = Path.Combine(dir, "na-verdade-m4a.mp3"), fakeWav = Path.Combine(dir, "na-verdade-mp3.wav"),
+       noExt = Path.Combine(dir, "sem-extensao");
+File.Copy(m4a, fakeMp3, true);
+File.Copy(mp3, fakeWav, true);
+File.Copy(m4a, noExt, true);
+CheckOther("M4A chamado .mp3", fakeMp3, AudioKind.Other);
+CheckOther("MP3 chamado .wav", fakeWav, AudioKind.Mp3);
+CheckOther("M4A sem extensao", noExt, AudioKind.Other);
+
+// Taxa baixa, mono (gravador de voz) e 6 canais.
+string voice = Path.Combine(dir, "voz.wav"), surround = Path.Combine(dir, "surround.wav");
+WaveFileWriter.CreateWaveFile16(voice, new SignalGenerator(8000, 1) { Frequency = 440, Gain = 0.3 }.Take(TimeSpan.FromSeconds(10)));
+WaveFileWriter.CreateWaveFile16(surround, new SignalGenerator(48000, 6) { Frequency = 440, Gain = 0.3 }.Take(TimeSpan.FromSeconds(10)));
+CheckOther("WAV 8 kHz mono", voice, AudioKind.Wav);
+CheckOther("WAV 6 canais", surround, AudioKind.Wav);
+
+// Arquivo que não é áudio: mensagem clara em vez de travar.
+string text = Path.Combine(dir, "texto.txt");
+File.WriteAllText(text, "isto não é um áudio, é só um texto qualquer");
+string error = "";
+try { AudioSource.Open(text).Dispose(); } catch (NotSupportedException ex) { error = ex.Message; }
+Check("arquivo que não é áudio é recusado", error.Length > 0, error);
+string extError = "";
+try { AudioTrimmer.Save(mp3, Path.Combine(dir, "x.m4a"), 1, 2); } catch (ArgumentException ex) { extError = ex.Message; }
+Check("salvar em extensão não suportada é recusado", extError.Length > 0, extError);
+
+// ---------- Posição exata (mover o cursor) ----------
+
+float[] ReadAll(AudioSource s, int max = int.MaxValue)
+{
+    var all = new List<float>();
+    var buf = new float[8192];
+    int n;
+    while (all.Count < max && (n = s.Read(buf, 0, buf.Length)) > 0) all.AddRange(buf.AsSpan(0, n).ToArray());
+    return all.ToArray();
+}
+
+void CheckSeek(string name, string path)
+{
+    using var s = AudioSource.Open(path);
+    var all = ReadAll(s);
+    int ch = s.WaveFormat.Channels, rate = s.WaveFormat.SampleRate;
+    double worst = 0;
+    foreach (double t in new[] { 15.3, 2.7, 18.01, 9.99, 0.0 })
+    {
+        s.Seek(t);
+        var part = ReadAll(s, rate * ch / 4);
+        int at = (int)Math.Round(t * rate) * ch;
+        for (int i = 0; i < Math.Min(part.Length, rate * ch / 4); i++) worst = Math.Max(worst, Math.Abs(part[i] - all[at + i]));
+    }
+    Check($"mover cursor: {name}", worst < 0.02, $"maior diferença={worst:F4}");
+}
+
+// Varredura de frequência: cada instante soa diferente, então qualquer desvio aparece.
+string sweepWav = Path.Combine(dir, "varredura.wav"), lo = Path.Combine(dir, "v96.mp3"), hi = Path.Combine(dir, "v320.mp3"),
+       vbr = Path.Combine(dir, "varredura-vbr.mp3");
+WaveFileWriter.CreateWaveFile16(sweepWav, new SignalGenerator(44100, 2)
+    { Type = SignalGeneratorType.Sweep, Frequency = 200, FrequencyEnd = 3000, SweepLengthSecs = 20, Gain = 0.4 }.Take(TimeSpan.FromSeconds(20)));
+using (var r = new WaveFileReader(sweepWav)) MediaFoundationEncoder.EncodeToMp3(r, lo, 96000);
+using (var r = new WaveFileReader(sweepWav)) MediaFoundationEncoder.EncodeToMp3(r, hi, 320000);
+using (var o = File.Create(vbr))
+{
+    // Metade a 96 kbps e metade a 320 kbps: um MP3 de taxa variável.
+    int half = 10 * 44100 / 1152, i = 0;
+    using var a = new Mp3FileReader(lo);
+    using var b = new Mp3FileReader(hi);
+    Mp3Frame? f;
+    while (i++ < half && (f = a.ReadNextFrame()) != null) { b.ReadNextFrame(); o.Write(f.RawData); }
+    while ((f = b.ReadNextFrame()) != null) o.Write(f.RawData);
+}
+CheckSeek("WAV", sweepWav);
+CheckSeek("MP3 320 kbps", hi);
+CheckSeek("MP3 VBR", vbr);
+
 // Leitura de tempos digitados.
 Check("TimeFormat 01:23,5", TimeFormat.TryParse("01:23,5", out double t1) && Math.Abs(t1 - 83.5) < 1e-9, t1.ToString());
 Check("TimeFormat 1:00:00.250", TimeFormat.TryParse("1:00:00.250", out double t2) && Math.Abs(t2 - 3600.25) < 1e-9, t2.ToString());

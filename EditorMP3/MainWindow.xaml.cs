@@ -2,30 +2,47 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Mp3Editor.Audio;
+using Mp3Editor.Controls;
 
 namespace Mp3Editor;
 
 public partial class MainWindow : Window
 {
+    internal const string OpenFilter =
+        "Arquivos de áudio (*.mp3;*.wav)|*.mp3;*.wav|MP3 (*.mp3)|*.mp3|WAV (*.wav)|*.wav|Todos os arquivos (*.*)|*.*";
+
     private const double PreviewSeconds = 3;
+    private const string PlayLabel = "▶  Reproduzir";
+    private const string PauseLabel = "⏸  Pausar";
+
+    /// <summary>O que está tocando: o áudio inteiro, o resultado do corte ou um trecho curto.</summary>
+    private enum PlayMode { Full, Result, Preview }
 
     private readonly PlaybackService _player = new();
-    private readonly DispatcherTimer _timer;
+    private PlayMode _mode = PlayMode.Full;
     private string? _path;
     private bool _busy;
+    private bool _following;           // o cursor está acompanhando a reprodução
+    private bool _selectionUiPending;
+    private TimeSpan _lastPositionText;
 
     public MainWindow()
     {
         InitializeComponent();
 
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
-        _timer.Tick += (_, _) => UpdatePlaybackUi();
         _player.PlaybackEnded += (_, _) => OnPlaybackFinished();
-        Waveform.SelectionChanged += (_, _) => UpdateSelectionUi();
-        Closed += (_, _) => _player.Dispose();
+        Waveform.SelectionChanged += (_, _) => OnSelectionChanged();
+        Waveform.PlayheadDragging += (_, t) => ShowPosition(t);
+        Waveform.PlayheadMoved += (_, t) => SeekTo(t);
+        Closed += (_, _) =>
+        {
+            FollowPlayback(false);
+            _player.Dispose();
+        };
 
         UpdateEnabledState();
 
@@ -42,7 +59,7 @@ public partial class MainWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = "Abrir arquivo de áudio",
-            Filter = "Arquivos de áudio (*.mp3;*.wav)|*.mp3;*.wav|MP3 (*.mp3)|*.mp3|WAV (*.wav)|*.wav",
+            Filter = OpenFilter,
         };
         if (dialog.ShowDialog(this) == true)
             await LoadFileAsync(dialog.FileName);
@@ -60,29 +77,45 @@ public partial class MainWindow : Window
             await LoadFileAsync(files[0]);
     }
 
-    private async Task LoadFileAsync(string path)
+    internal async Task LoadFileAsync(string path)
     {
         if (_busy) return;
         StopPlayback();
+        string previousStatus = StatusText.Text;
         SetBusy(true, "Carregando " + Path.GetFileName(path) + "…");
         try
         {
-            var data = await Task.Run(() => WaveformData.Load(path, 6000));
-            _player.Load(path);
+            var (data, source) = await Task.Run(() =>
+            {
+                var opened = AudioSource.Open(path);
+                try
+                {
+                    return (WaveformData.Load(opened), opened);
+                }
+                catch
+                {
+                    opened.Dispose();
+                    throw;
+                }
+            });
+            _player.Load(source);
             _path = path;
 
             FileNameText.Text = Path.GetFileName(path);
             Title = Path.GetFileName(path) + " — Editor de MP3";
             HintText.Visibility = Visibility.Collapsed;
             Waveform.SetData(data);
+            UpdateSelectionUi();
+            ShowPosition(0);
 
-            string channels = data.Channels == 1 ? "mono" : data.Channels == 2 ? "estéreo" : $"{data.Channels} canais";
+            string channels = data.Channels == 1 ? "mono" : "estéreo";
             StatusText.Text = $"{Path.GetExtension(path).TrimStart('.').ToUpperInvariant()} · {data.SampleRate} Hz · {channels} · " +
-                              $"duração {TimeFormat.Format(data.Duration)}.  Arraste os marcadores verde (início) e vermelho (fim).";
+                              $"duração {TimeFormat.Format(data.Duration)}.  Arraste a linha verde (início) e a vermelha (fim). " +
+                              "Clique ou arraste no gráfico para mover o cursor.";
         }
         catch (Exception ex)
         {
-            StatusText.Text = "";
+            StatusText.Text = previousStatus;
             MessageBox.Show(this, "Não foi possível abrir o arquivo:\n\n" + ex.Message, "Erro",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -142,10 +175,25 @@ public partial class MainWindow : Window
 
     // ---------- Corte ----------
 
+    private void OnSelectionChanged()
+    {
+        // Ao ouvir o resultado, mover a linha do fim já vale para o que está tocando.
+        if (_mode == PlayMode.Result) _player.SetEnd(Waveform.End);
+
+        // Atualiza os textos no máximo uma vez por quadro durante o arraste.
+        if (_selectionUiPending) return;
+        _selectionUiPending = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
+        {
+            _selectionUiPending = false;
+            UpdateSelectionUi();
+        });
+    }
+
     private void UpdateSelectionUi()
     {
-        if (!StartBox.IsKeyboardFocused) StartBox.Text = TimeFormat.Format(Waveform.Start);
-        if (!EndBox.IsKeyboardFocused) EndBox.Text = TimeFormat.Format(Waveform.End);
+        if (!StartBox.IsKeyboardFocused) SetText(StartBox, TimeFormat.Format(Waveform.Start));
+        if (!EndBox.IsKeyboardFocused) SetText(EndBox, TimeFormat.Format(Waveform.End));
 
         if (_path == null)
         {
@@ -159,109 +207,149 @@ public partial class MainWindow : Window
                           $"(remove {TimeFormat.Format(removedStart)} do começo e {TimeFormat.Format(removedEnd)} do final)";
     }
 
+    private static void SetText(TextBox box, string text)
+    {
+        if (box.Text != text) box.Text = text;
+    }
+
     private void TimeBox_KeyDown(object sender, KeyEventArgs e)
     {
+        var box = (TextBox)sender;
         if (e.Key == Key.Enter)
         {
-            ApplyTimeBox((TextBox)sender);
+            ApplyTimeBox(box);
             e.Handled = true;
         }
         else if (e.Key == Key.Escape)
         {
-            Keyboard.ClearFocus();
-            UpdateSelectionUi();
+            box.Text = CurrentText(box); // descarta o que foi digitado
+            Waveform.Focus();
+            e.Handled = true;
         }
     }
 
     private void TimeBox_LostFocus(object sender, RoutedEventArgs e) => ApplyTimeBox((TextBox)sender);
 
+    private string CurrentText(TextBox box) =>
+        TimeFormat.Format(box == StartBox ? Waveform.Start : Waveform.End);
+
     private void ApplyTimeBox(TextBox box)
     {
-        if (_path == null) return;
+        if (_path == null || box.Text == CurrentText(box)) return;
         if (TimeFormat.TryParse(box.Text, out double t))
         {
             if (box == StartBox)
-                Waveform.SetSelection(Math.Min(t, Waveform.End - 0.05), Waveform.End);
+                Waveform.SetSelection(Math.Min(t, Waveform.End - WaveformControl.MinGap), Waveform.End);
             else
-                Waveform.SetSelection(Waveform.Start, Math.Max(t, Waveform.Start + 0.05));
+                Waveform.SetSelection(Waveform.Start, Math.Max(t, Waveform.Start + WaveformControl.MinGap));
         }
         else
         {
             StatusText.Text = "Tempo inválido. Use o formato mm:ss.mmm, por exemplo 01:23.500.";
         }
-        box.Text = TimeFormat.Format(box == StartBox ? Waveform.Start : Waveform.End);
+        box.Text = CurrentText(box);
     }
 
     private void StartHere_Click(object sender, RoutedEventArgs e)
     {
-        if (!TryGetPlaybackPosition(out double pos)) return;
-        Waveform.SetSelection(Math.Min(pos, Waveform.End - 0.05), Waveform.End);
+        double t = CursorTime;
+        if (t > Waveform.End - WaveformControl.MinGap)
+            StatusText.Text = "O cursor está depois da linha do fim. Mova a linha vermelha primeiro.";
+        else
+            Waveform.SetSelection(t, Waveform.End);
     }
 
     private void EndHere_Click(object sender, RoutedEventArgs e)
     {
-        if (!TryGetPlaybackPosition(out double pos)) return;
-        Waveform.SetSelection(Waveform.Start, Math.Max(pos, Waveform.Start + 0.05));
+        double t = CursorTime;
+        if (t < Waveform.Start + WaveformControl.MinGap)
+            StatusText.Text = "O cursor está antes da linha do início. Mova a linha verde primeiro.";
+        else
+            Waveform.SetSelection(Waveform.Start, t);
     }
 
     private void Reset_Click(object sender, RoutedEventArgs e) => Waveform.SetSelection(0, Waveform.Duration);
 
-    private bool TryGetPlaybackPosition(out double position)
-    {
-        position = _player.Position;
-        if (_player.IsActive) return true;
-        StatusText.Text = "Toque o áudio (por exemplo, \"Ouvir original\") e clique no botão quando chegar ao ponto desejado.";
-        return false;
-    }
-
     // ---------- Reprodução ----------
 
-    private void PlayResult_Click(object sender, RoutedEventArgs e) => Play(Waveform.Start, Waveform.End);
+    /// <summary>Posição do cursor branco: o que está sendo ouvido, ou onde ele foi deixado.</summary>
+    private double CursorTime => _player.IsActive ? _player.Position : Waveform.Playhead;
 
-    private void PlayHead_Click(object sender, RoutedEventArgs e) =>
-        Play(Waveform.Start, Math.Min(Waveform.Start + PreviewSeconds, Waveform.End));
-
-    private void PlayTail_Click(object sender, RoutedEventArgs e) =>
-        Play(Math.Max(Waveform.End - PreviewSeconds, Waveform.Start), Waveform.End);
-
-    private void PlayOriginal_Click(object sender, RoutedEventArgs e) => Play(0, Waveform.Duration);
-
-    private void Pause_Click(object sender, RoutedEventArgs e) => TogglePause();
+    private void PlayPause_Click(object sender, RoutedEventArgs e) => TogglePlay();
 
     private void Stop_Click(object sender, RoutedEventArgs e) => StopPlayback();
 
-    private void Play(double from, double to)
+    private void PlayResult_Click(object sender, RoutedEventArgs e) =>
+        Play(Waveform.Start, Waveform.End, PlayMode.Result);
+
+    private void PlayHead_Click(object sender, RoutedEventArgs e) =>
+        Play(Waveform.Start, Math.Min(Waveform.Start + PreviewSeconds, Waveform.End), PlayMode.Preview);
+
+    private void PlayTail_Click(object sender, RoutedEventArgs e) =>
+        Play(Math.Max(Waveform.End - PreviewSeconds, Waveform.Start), Waveform.End, PlayMode.Preview);
+
+    private void TogglePlay()
+    {
+        if (_path == null || _busy) return;
+
+        if (_player.IsPlaying)
+        {
+            _player.Pause();
+        }
+        else if (_player.IsPaused)
+        {
+            _player.Resume();
+        }
+        else
+        {
+            double from = Waveform.Playhead;
+            if (from >= Waveform.Duration - WaveformControl.MinGap) from = 0;
+            PlayFrom(from);
+            return;
+        }
+        UpdatePlaybackState();
+    }
+
+    /// <summary>Toca a partir do ponto, parando na linha do fim se estiver ouvindo o resultado.</summary>
+    private void PlayFrom(double from)
+    {
+        bool insideResult = _mode == PlayMode.Result && from >= Waveform.Start && from < Waveform.End;
+        Play(from, insideResult ? Waveform.End : Waveform.Duration, insideResult ? PlayMode.Result : PlayMode.Full);
+    }
+
+    private void Play(double from, double to, PlayMode mode)
     {
         if (_path == null) return;
         try
         {
+            _mode = mode;
             _player.Play(from, to);
+            Waveform.Playhead = from;
         }
         catch (Exception ex)
         {
+            StopPlayback();
             MessageBox.Show(this, "Não foi possível tocar o áudio:\n\n" + ex.Message, "Erro",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
-        PauseButton.Content = "⏸  Pausar";
-        _timer.Start();
-        UpdatePlaybackUi();
-        UpdateEnabledState();
+        UpdatePlaybackState();
     }
 
-    private void TogglePause()
+    /// <summary>O usuário escolheu outra posição no gráfico.</summary>
+    private void SeekTo(double time)
     {
-        if (!_player.IsActive) return;
-        if (_player.IsPaused)
+        if (_player.IsPlaying)
         {
-            _player.Resume();
-            PauseButton.Content = "⏸  Pausar";
+            PlayFrom(Math.Min(time, Math.Max(0, Waveform.Duration - 0.01)));
         }
         else
         {
-            _player.Pause();
-            PauseButton.Content = "▶  Continuar";
+            _player.Stop(); // pausado: "Reproduzir" continua do novo ponto
+            Waveform.Playhead = time;
+            UpdatePlaybackState();
         }
+        ShowPosition(time);
     }
 
     private void StopPlayback()
@@ -272,26 +360,48 @@ public partial class MainWindow : Window
 
     private void OnPlaybackFinished()
     {
-        _timer.Stop();
-        Waveform.Playhead = null;
-        PositionText.Text = "";
-        PauseButton.Content = "⏸  Pausar";
+        _mode = PlayMode.Full;
+        Waveform.Playhead = Waveform.Start;
+        if (_path != null && !Waveform.IsDraggingPlayhead) ShowPosition(Waveform.Start);
+        UpdatePlaybackState();
+    }
+
+    /// <summary>Ajusta botões e o acompanhamento do cursor ao estado do player.</summary>
+    private void UpdatePlaybackState()
+    {
+        PlayPauseButton.Content = _player.IsPlaying ? PauseLabel : PlayLabel;
+        FollowPlayback(_player.IsPlaying);
         UpdateEnabledState();
     }
 
-    private void UpdatePlaybackUi()
+    private void FollowPlayback(bool follow)
     {
-        if (!_player.IsActive) return;
+        if (follow == _following) return;
+        _following = follow;
+        if (follow) CompositionTarget.Rendering += OnRenderingFrame;
+        else CompositionTarget.Rendering -= OnRenderingFrame;
+    }
+
+    private void OnRenderingFrame(object? sender, EventArgs e)
+    {
+        if (!_player.IsPlaying || Waveform.IsDraggingPlayhead) return;
         double pos = _player.Position;
         Waveform.Playhead = pos;
-        PositionText.Text = $"{TimeFormat.Format(pos)} / {TimeFormat.Format(Waveform.Duration)}";
+
+        // O cursor anda a cada quadro; o texto, 20 vezes por segundo.
+        var now = ((RenderingEventArgs)e).RenderingTime;
+        if ((now - _lastPositionText).Duration().TotalMilliseconds < 50) return;
+        _lastPositionText = now;
+        ShowPosition(pos);
     }
+
+    private void ShowPosition(double time) =>
+        PositionText.Text = $"{TimeFormat.Format(time)} / {TimeFormat.Format(Waveform.Duration)}";
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Space || Keyboard.FocusedElement is TextBox || _path == null || _busy) return;
-        if (_player.IsActive) TogglePause();
-        else Play(Waveform.Start, Waveform.End);
+        if (!e.IsRepeat) TogglePlay();
         e.Handled = true;
     }
 
@@ -308,20 +418,16 @@ public partial class MainWindow : Window
     private void UpdateEnabledState()
     {
         bool loaded = _path != null && !_busy;
-        bool playing = _player.IsActive;
 
         OpenButton.IsEnabled = !_busy;
         Waveform.IsEnabled = loaded;
         foreach (var control in new Control[]
                  {
-                     SaveButton, StartBox, EndBox, ResetButton,
-                     PlayResultButton, PlayHeadButton, PlayTailButton, PlayOriginalButton,
+                     SaveButton, StartBox, EndBox, StartHereButton, EndHereButton, ResetButton,
+                     PlayPauseButton, PlayResultButton, PlayHeadButton, PlayTailButton,
                  })
             control.IsEnabled = loaded;
 
-        StartHereButton.IsEnabled = loaded && playing;
-        EndHereButton.IsEnabled = loaded && playing;
-        PauseButton.IsEnabled = loaded && playing;
-        StopButton.IsEnabled = loaded && playing;
+        StopButton.IsEnabled = loaded && _player.IsActive;
     }
 }

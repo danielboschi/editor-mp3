@@ -9,13 +9,14 @@
     <RootNamespace>Mp3Editor</RootNamespace>
     <AssemblyName>EditorMP3</AssemblyName>
     <Product>Editor de MP3</Product>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
     <Resource Include="Assets\app.ico" />
+    <InternalsVisibleTo Include="UiTests" />
   </ItemGroup>
 
 </Project>

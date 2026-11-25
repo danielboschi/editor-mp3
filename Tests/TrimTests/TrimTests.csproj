@@ -10,6 +10,8 @@
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
     <Compile Include="..\..\EditorMP3\Audio\AudioTrimmer.cs" Link="AudioTrimmer.cs" />
+    <Compile Include="..\..\EditorMP3\Audio\AudioSource.cs" Link="AudioSource.cs" />
+    <Compile Include="..\..\EditorMP3\Audio\WaveformData.cs" Link="WaveformData.cs" />
     <Compile Include="..\..\EditorMP3\TimeFormat.cs" Link="TimeFormat.cs" />
   </ItemGroup>
 

@@ -10,16 +10,18 @@ public static class AudioTrimmer
 {
     /// <summary>
     /// Salva o trecho [start, end] (em segundos) de <paramref name="input"/> em <paramref name="output"/>.
-    /// O formato de saída é escolhido pela extensão (.mp3 ou .wav).
+    /// A entrada pode ser qualquer áudio que o Windows decodifique; a saída é .mp3 ou .wav.
     /// Retorna uma descrição curta de como o arquivo foi gerado.
     /// </summary>
     public static string Save(string input, string output, double start, double end)
     {
         if (end <= start) throw new ArgumentException("O fim do corte precisa ser depois do início.");
 
-        bool inputIsMp3 = HasExtension(input, ".mp3");
-        bool inputIsWav = HasExtension(input, ".wav");
         bool outputIsMp3 = HasExtension(output, ".mp3");
+        if (!outputIsMp3 && !HasExtension(output, ".wav"))
+            throw new ArgumentException("O nome do arquivo salvo precisa terminar em .mp3 ou .wav.");
+
+        var inputKind = AudioSource.Detect(input);
 
         // Grava em um arquivo temporário e só substitui o destino no final,
         // para não deixar um arquivo pela metade se algo der errado.
@@ -27,12 +29,12 @@ public static class AudioTrimmer
         try
         {
             string description;
-            if (outputIsMp3 && inputIsMp3)
+            if (outputIsMp3 && inputKind == AudioKind.Mp3)
             {
                 TrimMp3Lossless(input, temp, start, end);
                 description = "MP3 cortado sem recodificar (sem perda de qualidade)";
             }
-            else if (!outputIsMp3 && inputIsWav)
+            else if (!outputIsMp3 && inputKind == AudioKind.Wav && CanCopyWav(input))
             {
                 TrimWavExact(input, temp, start, end);
                 description = "WAV cortado com precisão de amostra";
@@ -45,7 +47,7 @@ public static class AudioTrimmer
             else
             {
                 EncodeToMp3(input, temp, start, end);
-                description = "codificado em MP3 192 kbps";
+                description = "convertido para MP3";
             }
 
             File.Move(temp, output, overwrite: true);
@@ -92,10 +94,8 @@ public static class AudioTrimmer
         var format = reader.WaveFormat;
         int align = format.BlockAlign;
 
-        long startByte = Math.Clamp((long)(start * format.AverageBytesPerSecond), 0, reader.Length);
-        long endByte = Math.Clamp((long)(end * format.AverageBytesPerSecond), 0, reader.Length);
-        startByte -= startByte % align;
-        endByte -= endByte % align;
+        long startByte = Math.Clamp((long)Math.Round(start * format.SampleRate) * align, 0, reader.Length);
+        long endByte = Math.Clamp((long)Math.Round(end * format.SampleRate) * align, 0, reader.Length);
 
         reader.Position = startByte;
         using var writer = new WaveFileWriter(output, format);
@@ -114,22 +114,36 @@ public static class AudioTrimmer
     /// <summary>Decodifica o trecho e salva como WAV 16 bits.</summary>
     public static void DecodeToWav(string input, string output, double start, double end)
     {
-        using var reader = new AudioFileReader(input);
-        WaveFileWriter.CreateWaveFile16(output, Range(reader, start, end));
+        using var source = AudioSource.Open(input);
+        WaveFileWriter.CreateWaveFile16(output, Range(source, start, end));
     }
 
     /// <summary>Decodifica o trecho e codifica em MP3 com o codificador do Windows.</summary>
     public static void EncodeToMp3(string input, string output, double start, double end)
     {
         MediaFoundationApi.Startup();
-        using var reader = new AudioFileReader(input);
-        MediaFoundationEncoder.EncodeToMp3(Range(reader, start, end).ToWaveProvider16(), output, 192000);
+        using var source = AudioSource.Open(input);
+        ISampleProvider samples = Range(source, start, end);
+
+        // O codificador MP3 só aceita algumas taxas de amostragem.
+        if (samples.WaveFormat.SampleRate is not (32000 or 44100 or 48000))
+            samples = new WdlResamplingSampleProvider(samples, 44100);
+
+        MediaFoundationEncoder.EncodeToMp3(samples.ToWaveProvider16(), output, 192000);
     }
 
-    private static ISampleProvider Range(AudioFileReader reader, double start, double end)
+    private static ISampleProvider Range(AudioSource source, double start, double end)
     {
-        reader.CurrentTime = TimeSpan.FromSeconds(start);
-        return new OffsetSampleProvider(reader) { Take = TimeSpan.FromSeconds(end - start) };
+        source.Seek(start);
+        return new OffsetSampleProvider(source) { Take = TimeSpan.FromSeconds(end - start) };
+    }
+
+    /// <summary>WAV comprimido (ADPCM etc.) não pode ser cortado por cópia direta.</summary>
+    private static bool CanCopyWav(string input)
+    {
+        using var reader = new WaveFileReader(input);
+        return reader.WaveFormat.Encoding is WaveFormatEncoding.Pcm or WaveFormatEncoding.IeeeFloat
+            or WaveFormatEncoding.Extensible;
     }
 
     private static bool HasExtension(string path, string ext) =>

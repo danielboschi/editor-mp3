@@ -33,39 +33,39 @@
                 <c:WaveformControl x:Name="Waveform" />
                 <TextBlock x:Name="HintText" HorizontalAlignment="Center" VerticalAlignment="Center"
                            Foreground="#8A8A96" FontSize="15" IsHitTestVisible="False" TextAlignment="Center"
-                           Text="Abra um arquivo MP3 ou WAV, ou arraste-o para esta janela." />
+                           Text="Abra um arquivo de áudio, ou arraste-o para esta janela." />
             </Grid>
         </Border>
 
         <!-- Corte -->
         <WrapPanel Grid.Row="2">
             <TextBlock Text="Início:" Style="{StaticResource Label}" Foreground="#1E9E62" />
-            <TextBox x:Name="StartBox" LostFocus="TimeBox_LostFocus" KeyDown="TimeBox_KeyDown"
+            <TextBox x:Name="StartBox" IsUndoEnabled="False" LostFocus="TimeBox_LostFocus" KeyDown="TimeBox_KeyDown"
                      ToolTip="Formato mm:ss.mmm — pressione Enter para aplicar" />
             <Button x:Name="StartHereButton" Content="Marcar início aqui" Click="StartHere_Click"
-                    ToolTip="Usa a posição que está tocando agora como início" />
+                    ToolTip="Leva a linha verde até o cursor branco" />
             <Rectangle Width="18" />
             <TextBlock Text="Fim:" Style="{StaticResource Label}" Foreground="#D93C3C" />
-            <TextBox x:Name="EndBox" LostFocus="TimeBox_LostFocus" KeyDown="TimeBox_KeyDown"
+            <TextBox x:Name="EndBox" IsUndoEnabled="False" LostFocus="TimeBox_LostFocus" KeyDown="TimeBox_KeyDown"
                      ToolTip="Formato mm:ss.mmm — pressione Enter para aplicar" />
             <Button x:Name="EndHereButton" Content="Marcar fim aqui" Click="EndHere_Click"
-                    ToolTip="Usa a posição que está tocando agora como fim" />
+                    ToolTip="Leva a linha vermelha até o cursor branco" />
             <Button x:Name="ResetButton" Content="Desfazer corte" Click="Reset_Click" />
         </WrapPanel>
 
         <!-- Reprodução -->
         <WrapPanel Grid.Row="3">
-            <Button x:Name="PlayResultButton" Content="▶  Ouvir resultado" Style="{StaticResource PrimaryButton}"
-                    Click="PlayResult_Click" ToolTip="Toca só o trecho que será salvo (Espaço)" />
-            <Button x:Name="PlayHeadButton" Content="▶  Primeiros 3 s" Click="PlayHead_Click"
-                    ToolTip="Confere como ficou o começo" />
-            <Button x:Name="PlayTailButton" Content="▶  Últimos 3 s" Click="PlayTail_Click"
-                    ToolTip="Confere como ficou o final" />
-            <Button x:Name="PlayOriginalButton" Content="▶  Ouvir original" Click="PlayOriginal_Click"
-                    ToolTip="Toca o arquivo inteiro, sem corte" />
-            <Button x:Name="PauseButton" Content="⏸  Pausar" Click="Pause_Click" />
+            <Button x:Name="PlayPauseButton" Content="▶  Reproduzir" MinWidth="125" Click="PlayPause_Click"
+                    ToolTip="Toca a partir do cursor branco, ou pausa (Espaço)" />
             <Button x:Name="StopButton" Content="⏹  Parar" Click="Stop_Click" />
-            <TextBlock x:Name="PositionText" VerticalAlignment="Center" Margin="6,0,0,6"
+            <Rectangle Width="18" />
+            <Button x:Name="PlayResultButton" Content="Ouvir resultado" Style="{StaticResource PrimaryButton}"
+                    Click="PlayResult_Click" ToolTip="Toca só o trecho que será salvo" />
+            <Button x:Name="PlayHeadButton" Content="Primeiros 3 s" Click="PlayHead_Click"
+                    ToolTip="Confere como ficou o começo" />
+            <Button x:Name="PlayTailButton" Content="Últimos 3 s" Click="PlayTail_Click"
+                    ToolTip="Confere como ficou o final" />
+            <TextBlock x:Name="PositionText" VerticalAlignment="Center" Margin="6,0,0,6" MinWidth="180"
                        FontFamily="Consolas" FontSize="14" />
         </WrapPanel>
 
