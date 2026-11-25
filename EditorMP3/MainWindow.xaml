@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:c="clr-namespace:Mp3Editor.Controls"
-        Title="Editor de MP3" Icon="Assets/app.ico" Height="560" Width="1040" MinWidth="780" MinHeight="440"
+        Title="Editor de MP3" Icon="Assets/app.ico" Height="600" Width="1040" MinWidth="780" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         FontFamily="Segoe UI" FontSize="13" Background="#F4F4F6"
         AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver"
@@ -11,6 +11,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -53,14 +54,32 @@
             <Button x:Name="ResetButton" Content="Desfazer corte" Click="Reset_Click" />
         </WrapPanel>
 
-        <!-- Reprodução -->
+        <!-- Fade (opcional) -->
         <WrapPanel Grid.Row="3">
+            <CheckBox x:Name="FadeInCheck" Content="Fade in no começo" VerticalAlignment="Center" Margin="0,0,8,6"
+                      Checked="FadeCheck_Changed" Unchecked="FadeCheck_Changed"
+                      ToolTip="O volume vai aumentando aos poucos a partir da linha verde" />
+            <TextBox x:Name="FadeInBox" Text="2,0" Width="56" IsUndoEnabled="False"
+                     LostFocus="FadeBox_LostFocus" KeyDown="FadeBox_KeyDown"
+                     ToolTip="Duração em segundos — pressione Enter para aplicar" />
+            <TextBlock Text="s" VerticalAlignment="Center" Margin="0,0,24,6" />
+            <CheckBox x:Name="FadeOutCheck" Content="Fade out no final" VerticalAlignment="Center" Margin="0,0,8,6"
+                      Checked="FadeCheck_Changed" Unchecked="FadeCheck_Changed"
+                      ToolTip="O volume vai diminuindo aos poucos até a linha vermelha" />
+            <TextBox x:Name="FadeOutBox" Text="2,0" Width="56" IsUndoEnabled="False"
+                     LostFocus="FadeBox_LostFocus" KeyDown="FadeBox_KeyDown"
+                     ToolTip="Duração em segundos — pressione Enter para aplicar" />
+            <TextBlock Text="s" VerticalAlignment="Center" Margin="0,0,0,6" />
+        </WrapPanel>
+
+        <!-- Reprodução -->
+        <WrapPanel Grid.Row="4">
             <Button x:Name="PlayPauseButton" Content="▶  Reproduzir" MinWidth="125" Click="PlayPause_Click"
                     ToolTip="Toca a partir do cursor branco, ou pausa (Espaço)" />
             <Button x:Name="StopButton" Content="⏹  Parar" Click="Stop_Click" />
             <Rectangle Width="18" />
             <Button x:Name="PlayResultButton" Content="Ouvir resultado" Style="{StaticResource PrimaryButton}"
-                    Click="PlayResult_Click" ToolTip="Toca só o trecho que será salvo" />
+                    Click="PlayResult_Click" ToolTip="Toca só o trecho que será salvo, com os fades" />
             <Button x:Name="PlayHeadButton" Content="Primeiros 3 s" Click="PlayHead_Click"
                     ToolTip="Confere como ficou o começo" />
             <Button x:Name="PlayTailButton" Content="Últimos 3 s" Click="PlayTail_Click"
@@ -70,7 +89,7 @@
         </WrapPanel>
 
         <!-- Status -->
-        <StackPanel Grid.Row="4" Margin="0,6,0,0">
+        <StackPanel Grid.Row="5" Margin="0,6,0,0">
             <TextBlock x:Name="ResultText" FontWeight="SemiBold" />
             <TextBlock x:Name="StatusText" Foreground="#606070" Margin="0,2,0,0" TextWrapping="Wrap" />
         </StackPanel>

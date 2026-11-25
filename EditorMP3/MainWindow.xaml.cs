@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -16,6 +17,7 @@ public partial class MainWindow : Window
         "Arquivos de áudio (*.mp3;*.wav)|*.mp3;*.wav|MP3 (*.mp3)|*.mp3|WAV (*.wav)|*.wav|Todos os arquivos (*.*)|*.*";
 
     private const double PreviewSeconds = 3;
+    private const double MinFade = 0.1, MaxFade = 60;
     private const string PlayLabel = "▶  Reproduzir";
     private const string PauseLabel = "⏸  Pausar";
 
@@ -27,6 +29,8 @@ public partial class MainWindow : Window
     private string? _path;
     private bool _busy;
     private bool _following;           // o cursor está acompanhando a reprodução
+    private double _fadeInSeconds = 2; // duração escolhida, mesmo com a opção desligada
+    private double _fadeOutSeconds = 2;
     private bool _selectionUiPending;
     private TimeSpan _lastPositionText;
 
@@ -153,10 +157,11 @@ public partial class MainWindow : Window
 
         string input = _path;
         double start = Waveform.Start, end = Waveform.End;
+        var fade = Waveform.Fade;
         SetBusy(true, "Salvando…");
         try
         {
-            string how = await Task.Run(() => AudioTrimmer.Save(input, output, start, end));
+            string how = await Task.Run(() => AudioTrimmer.Save(input, output, start, end, fade));
             StatusText.Text = $"Salvo em {output} ({how}).";
             MessageBox.Show(this, $"Arquivo salvo com sucesso!\n\n{output}\n\n({how})", "Salvo",
                 MessageBoxButton.OK, MessageBoxImage.Information);
@@ -179,6 +184,7 @@ public partial class MainWindow : Window
     {
         // Ao ouvir o resultado, mover a linha do fim já vale para o que está tocando.
         if (_mode == PlayMode.Result) _player.SetEnd(Waveform.End);
+        if (_mode != PlayMode.Full) _player.SetFade(CurrentFade());
 
         // Atualiza os textos no máximo uma vez por quadro durante o arraste.
         if (_selectionUiPending) return;
@@ -204,8 +210,24 @@ public partial class MainWindow : Window
         double removedStart = Waveform.Start;
         double removedEnd = Waveform.Duration - Waveform.End;
         ResultText.Text = $"Duração final: {TimeFormat.Format(Waveform.End - Waveform.Start)}   " +
-                          $"(remove {TimeFormat.Format(removedStart)} do começo e {TimeFormat.Format(removedEnd)} do final)";
+                          $"(remove {TimeFormat.Format(removedStart)} do começo e {TimeFormat.Format(removedEnd)} do final)" +
+                          DescribeFade();
     }
+
+    private string DescribeFade()
+    {
+        var wanted = Waveform.Fade;
+        if (wanted.IsNone) return "";
+        var fade = wanted.FitTo(Waveform.End - Waveform.Start);
+        var parts = new List<string>();
+        if (fade.In > 0) parts.Add($"fade in {FormatSeconds(fade.In)} s");
+        if (fade.Out > 0) parts.Add($"fade out {FormatSeconds(fade.Out)} s");
+        string note = fade == wanted ? "" : " (encurtado para caber no trecho)";
+        return "   " + string.Join(", ", parts) + note;
+    }
+
+    private static string FormatSeconds(double seconds) =>
+        seconds.ToString("0.0#", CultureInfo.InvariantCulture).Replace('.', ',');
 
     private static void SetText(TextBox box, string text)
     {
@@ -270,6 +292,61 @@ public partial class MainWindow : Window
 
     private void Reset_Click(object sender, RoutedEventArgs e) => Waveform.SetSelection(0, Waveform.Duration);
 
+    // ---------- Fade ----------
+
+    private FadeRegion? CurrentFade() =>
+        Waveform.Fade.IsNone ? null : new FadeRegion(Waveform.Start, Waveform.End, Waveform.Fade);
+
+    private void FadeCheck_Changed(object sender, RoutedEventArgs e) => UpdateFade();
+
+    private void FadeBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        var box = (TextBox)sender;
+        if (e.Key == Key.Enter)
+        {
+            ApplyFadeBox(box);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            box.Text = CurrentFadeText(box); // descarta o que foi digitado
+            Waveform.Focus();
+            e.Handled = true;
+        }
+    }
+
+    private void FadeBox_LostFocus(object sender, RoutedEventArgs e) => ApplyFadeBox((TextBox)sender);
+
+    private string CurrentFadeText(TextBox box) =>
+        FormatSeconds(box == FadeInBox ? _fadeInSeconds : _fadeOutSeconds);
+
+    private void ApplyFadeBox(TextBox box)
+    {
+        if (box.Text == CurrentFadeText(box)) return;
+        if (TimeFormat.TryParse(box.Text, out double t) && t is >= MinFade and <= MaxFade)
+        {
+            if (box == FadeInBox) _fadeInSeconds = t;
+            else _fadeOutSeconds = t;
+            UpdateFade();
+        }
+        else
+        {
+            StatusText.Text = $"Duração de fade inválida. Use de {FormatSeconds(MinFade)} a {FormatSeconds(MaxFade)} segundos, por exemplo 2,5.";
+        }
+        box.Text = CurrentFadeText(box);
+    }
+
+    /// <summary>Aplica as opções de fade ao gráfico e, se estiver ouvindo o resultado, ao som.</summary>
+    private void UpdateFade()
+    {
+        Waveform.Fade = new Fade(
+            FadeInCheck.IsChecked == true ? _fadeInSeconds : 0,
+            FadeOutCheck.IsChecked == true ? _fadeOutSeconds : 0);
+        if (_mode != PlayMode.Full) _player.SetFade(CurrentFade());
+        UpdateSelectionUi();
+        UpdateEnabledState();
+    }
+
     // ---------- Reprodução ----------
 
     /// <summary>Posição do cursor branco: o que está sendo ouvido, ou onde ele foi deixado.</summary>
@@ -323,7 +400,7 @@ public partial class MainWindow : Window
         try
         {
             _mode = mode;
-            _player.Play(from, to);
+            _player.Play(from, to, mode == PlayMode.Full ? null : CurrentFade());
             Waveform.Playhead = from;
         }
         catch (Exception ex)
@@ -425,8 +502,12 @@ public partial class MainWindow : Window
                  {
                      SaveButton, StartBox, EndBox, StartHereButton, EndHereButton, ResetButton,
                      PlayPauseButton, PlayResultButton, PlayHeadButton, PlayTailButton,
+                     FadeInCheck, FadeOutCheck,
                  })
             control.IsEnabled = loaded;
+
+        FadeInBox.IsEnabled = loaded && FadeInCheck.IsChecked == true;
+        FadeOutBox.IsEnabled = loaded && FadeOutCheck.IsChecked == true;
 
         StopButton.IsEnabled = loaded && _player.IsActive;
     }

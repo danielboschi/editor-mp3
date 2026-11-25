@@ -171,6 +171,139 @@ CheckSeek("WAV", sweepWav);
 CheckSeek("MP3 320 kbps", hi);
 CheckSeek("MP3 VBR", vbr);
 
+// ---------- Fade in / fade out ----------
+
+List<byte[]> Frames(string path)
+{
+    var list = new List<byte[]>();
+    using var r = new Mp3FileReader(path);
+    Mp3Frame? f;
+    while ((f = r.ReadNextFrame()) != null) list.Add(f.RawData);
+    return list;
+}
+
+// Volume médio (RMS) a cada 50 ms. Se "windows", decodifica com o Media Foundation.
+double[] Envelope(string path, bool windows = false)
+{
+    float[] all;
+    int step;
+    if (windows)
+    {
+        using var m = new MediaFoundationReader(path);
+        var sp = m.ToSampleProvider();
+        var list = new List<float>();
+        var buf = new float[8192];
+        int n;
+        while ((n = sp.Read(buf, 0, buf.Length)) > 0) list.AddRange(buf.AsSpan(0, n).ToArray());
+        all = list.ToArray();
+        step = sp.WaveFormat.SampleRate / 20 * sp.WaveFormat.Channels;
+    }
+    else
+    {
+        using var s = AudioSource.Open(path);
+        all = ReadAll(s);
+        step = s.WaveFormat.SampleRate / 20 * s.WaveFormat.Channels;
+    }
+    return Enumerable.Range(0, all.Length / step)
+        .Select(i => Math.Sqrt(all.AsSpan(i * step, step).ToArray().Average(v => (double)v * v))).ToArray();
+}
+
+// Compara o volume do arquivo com fade ao mesmo corte sem fade.
+void CheckEnvelope(string name, string plain, string faded, Fade fade, double toleranceDb, bool windows = false)
+{
+    double[] a = Envelope(plain, windows), b = Envelope(faded, windows);
+    var region = new FadeRegion(start, end, fade);
+    double worst = 0;
+    int compared = 0;
+    for (int i = 0; i < Math.Min(a.Length, b.Length) - 2; i++)
+    {
+        double power = 0;
+        for (int k = 0; k < 20; k++) { double g = region.GainAt(start + (i + (k + 0.5) / 20) * 0.05); power += g * g / 20; }
+        double gain = Math.Sqrt(power);
+        if (gain < 0.1 || a[i] < 0.01) continue;
+        worst = Math.Max(worst, Math.Abs(20 * Math.Log10(b[i] / a[i] / gain)));
+        compared++;
+    }
+    bool silentEnds = (fade.In <= 0 || b[0] < a[5] * 0.02) && (fade.Out <= 0 || b[Math.Min(109, Math.Min(a.Length, b.Length) - 1)] < a[5] * 0.05);
+    Check(name, worst <= toleranceDb && compared > 50 && silentEnds && Math.Abs(a.Length - b.Length) <= 1,
+        $"maior desvio={worst:F2} dB em {compared} janelas, pontas em silêncio={silentEnds}");
+}
+
+void CheckFade(string name, string source, string ext, double toleranceDb)
+{
+    string plain = Path.Combine(dir, "fade-sem-" + name.Replace(' ', '-') + ext), faded = Path.Combine(dir, "fade-com-" + name.Replace(' ', '-') + ext);
+    var both = new Fade(2, 1.5);
+    AudioTrimmer.Save(source, plain, start, end);
+    Console.WriteLine("   -> " + AudioTrimmer.Save(source, faded, start, end, both));
+    CheckEnvelope($"fade {name} → {ext}", plain, faded, both, toleranceDb);
+}
+
+CheckFade("MP3", mp3, ".mp3", 1.6);
+CheckFade("MP3", mp3, ".wav", 0.2);
+CheckFade("WAV 16 bits", wav, ".wav", 0.1);
+CheckFade("WAV", wav, ".mp3", 1.6);
+CheckFade("M4A", m4a, ".mp3", 1.6);
+CheckFade("M4A", m4a, ".wav", 0.2);
+CheckFade("6 canais", surround, ".wav", 0.1);
+
+// WAV em outras resoluções mantém o formato original.
+string wav24 = Path.Combine(dir, "tom24.wav"), wav32f = Path.Combine(dir, "tom32f.wav"), wav8 = Path.Combine(dir, "tom8.wav"),
+       wavExt = Path.Combine(dir, "tomext.wav"), mono = Path.Combine(dir, "tom-mono.mp3");
+ISampleProvider Tone(int ch) => new SignalGenerator(44100, ch) { Frequency = 440, Gain = 0.3 }.Take(TimeSpan.FromSeconds(10));
+WaveFileWriter.CreateWaveFile(wav24, new SampleToWaveProvider24(Tone(2)));
+WaveFileWriter.CreateWaveFile(wav32f, new SampleToWaveProvider(Tone(2)));
+using (var w8 = new WaveFileWriter(wav8, new WaveFormat(44100, 8, 1)))
+{
+    var buf = new float[4410];
+    var t = Tone(1);
+    int n;
+    while ((n = t.Read(buf, 0, buf.Length)) > 0) for (int i = 0; i < n; i++) w8.WriteByte((byte)Math.Round(128 + buf[i] * 127));
+}
+using (var r = new WaveFileReader(wav24))
+using (var we = new WaveFileWriter(wavExt, new WaveFormatExtensible(44100, 24, 2)))
+{
+    var all = new byte[r.Length];
+    r.ReadExactly(all);
+    we.Write(all, 0, all.Length);
+}
+foreach (var (name, file) in new[] { ("24 bits", wav24), ("32 bits float", wav32f), ("8 bits", wav8), ("extensible", wavExt) })
+{
+    CheckFade(name, file, ".wav", name == "8 bits" ? 0.6 : 0.1);
+    using var a = new WaveFileReader(file);
+    using var b = new WaveFileReader(Path.Combine(dir, "fade-com-" + name.Replace(' ', '-') + ".wav"));
+    Check($"fade {name} mantém o formato", a.WaveFormat.Encoding == b.WaveFormat.Encoding && a.WaveFormat.BitsPerSample == b.WaveFormat.BitsPerSample, b.WaveFormat.ToString());
+}
+WaveFileWriter.CreateWaveFile16(Path.Combine(dir, "mono44.wav"), Tone(1));
+using (var r = new WaveFileReader(Path.Combine(dir, "mono44.wav"))) MediaFoundationEncoder.EncodeToMp3(r, mono, 128000);
+using (var r = new Mp3FileReader(mono)) Check("fonte mono é mesmo mono", r.Mp3WaveFormat.Channels == 1, r.Mp3WaveFormat.ToString());
+CheckFade("MP3 mono", mono, ".mp3", 1.6);
+
+// O miolo do MP3 continua idêntico: só os quadros dos fades mudam, e só no volume.
+{
+    string plain = Path.Combine(dir, "fade-sem-MP3.mp3"), faded = Path.Combine(dir, "fade-com-MP3.mp3");
+    var a = Frames(plain);
+    var b = Frames(faded);
+    var changed = Enumerable.Range(0, Math.Min(a.Count, b.Count)).Where(i => !a[i].AsSpan().SequenceEqual(b[i])).ToList();
+    int lastIn = (int)Math.Ceiling(2 * 44100 / 1152.0) + 2, firstOut = a.Count - (int)Math.Ceiling(1.5 * 44100 / 1152.0) - 3;
+    Check("fade MP3: miolo idêntico ao original", a.Count == b.Count && changed.Count > 0 && changed.All(i => i <= lastIn || i >= firstOut),
+        $"{changed.Count} de {a.Count} quadros alterados");
+    Check("fade MP3: áudio comprimido intacto nos quadros alterados", changed.All(i => a[i].AsSpan(36 + 2).SequenceEqual(b[i].AsSpan(36 + 2))), "");
+    CheckEnvelope("fade MP3 no decodificador do Windows", plain, faded, new Fade(2, 1.5), 1.8, windows: true);
+    Console.WriteLine($"   quadros com CRC: {a.Count(f => (f[1] & 1) == 0)} de {a.Count}");
+}
+
+string onlyIn = Path.Combine(dir, "fade-so-in.mp3"), onlyOut = Path.Combine(dir, "fade-so-out.mp3"), none = Path.Combine(dir, "fade-nenhum.mp3");
+AudioTrimmer.Save(mp3, onlyIn, start, end, new Fade(2, 0));
+AudioTrimmer.Save(mp3, onlyOut, start, end, new Fade(0, 1.5));
+AudioTrimmer.Save(mp3, none, start, end, default);
+CheckEnvelope("só fade in", none, onlyIn, new Fade(2, 0), 1.6);
+CheckEnvelope("só fade out", none, onlyOut, new Fade(0, 1.5), 1.6);
+Check("sem fade o arquivo é igual ao corte normal", File.ReadAllBytes(none).AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(dir, "fade-sem-MP3.mp3"))), "");
+
+var fitted = new Fade(6, 3).FitTo(3);
+Check("fades maiores que o trecho são encurtados", Math.Abs(fitted.In - 2) < 1e-9 && Math.Abs(fitted.Out - 1) < 1e-9, fitted.ToString());
+Check("CRC-16 (valor conhecido)", Mp3FrameGain.Crc16("123456789"u8, 0xFFFF) == 0xAEE7, "");
+
 // Leitura de tempos digitados.
 Check("TimeFormat 01:23,5", TimeFormat.TryParse("01:23,5", out double t1) && Math.Abs(t1 - 83.5) < 1e-9, t1.ToString());
 Check("TimeFormat 1:00:00.250", TimeFormat.TryParse("1:00:00.250", out double t2) && Math.Abs(t2 - 3600.25) < 1e-9, t2.ToString());

@@ -37,7 +37,8 @@ public sealed class PlaybackService : IDisposable
         _from = 0;
     }
 
-    public void Play(double from, double to)
+    /// <param name="fade">Fades da prévia, ou null para tocar o áudio como ele é.</param>
+    public void Play(double from, double to, FadeRegion? fade = null)
     {
         if (_source == null) return;
         Stop();
@@ -45,7 +46,7 @@ public sealed class PlaybackService : IDisposable
         _source.Seek(from);
         _from = from;
 
-        var range = new RangeSampleProvider(_source, to);
+        var range = new RangeSampleProvider(_source, to, fade);
         var output = new WaveOutEvent { DesiredLatency = 200 };
         output.PlaybackStopped += (_, _) =>
         {
@@ -63,6 +64,9 @@ public sealed class PlaybackService : IDisposable
 
     /// <summary>Muda o ponto final do que está tocando, sem interromper o som.</summary>
     public void SetEnd(double to) => _range?.SetEnd(to);
+
+    /// <summary>Muda os fades do que está tocando, sem interromper o som.</summary>
+    public void SetFade(FadeRegion? fade) => _range?.SetFade(fade);
 
     public void Pause() => _output?.Pause();
 
@@ -93,11 +97,18 @@ public sealed class PlaybackService : IDisposable
         private readonly object _lock = new();
         private long _endFrame;
         private bool _cancelled;
+        private FadeRegion? _fade;
 
-        public RangeSampleProvider(AudioSource source, double end)
+        public RangeSampleProvider(AudioSource source, double end, FadeRegion? fade)
         {
             _source = source;
+            _fade = fade;
             SetEnd(end);
+        }
+
+        public void SetFade(FadeRegion? fade)
+        {
+            lock (_lock) _fade = fade;
         }
 
         public WaveFormat WaveFormat => _source.WaveFormat;
@@ -122,7 +133,10 @@ public sealed class PlaybackService : IDisposable
                 long remaining = (_endFrame - _source.Frame) * channels;
                 if (remaining <= 0) return 0;
                 int toRead = (int)Math.Min(count - count % channels, remaining);
-                return _source.Read(buffer, offset, toRead);
+                long frame = _source.Frame;
+                int read = _source.Read(buffer, offset, toRead);
+                _fade?.Apply(buffer, offset, read, channels, frame, WaveFormat.SampleRate);
+                return read;
             }
         }
     }

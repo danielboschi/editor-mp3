@@ -37,6 +37,8 @@ public sealed class WaveformControl : FrameworkElement
     private static readonly Brush StartBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x3D, 0xD6, 0x8C)));
     private static readonly Brush EndBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0x5C, 0x5C)));
     private static readonly Pen TickPen = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0x60, 0x60, 0x6A)), 1));
+    private static readonly Brush FadeBrush = Freeze(new SolidColorBrush(Color.FromArgb(0x90, 0x10, 0x10, 0x14)));
+    private static readonly Pen FadePen = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xC8, 0x57)), 1.5));
     private static readonly Typeface RulerTypeface = new("Segoe UI");
 
     private enum DragTarget { None, Start, End, Playhead }
@@ -51,6 +53,8 @@ public sealed class WaveformControl : FrameworkElement
     private double _start;
     private double _end;
     private double _playhead;
+    private Fade _fade;       // como pedido pelo usuário
+    private Fade _drawnFade;  // como foi desenhado (encurtado se não couber no trecho)
     private DragTarget _drag;
     private double _dragOffset; // distância entre o clique e a linha, para ela não "pular"
 
@@ -75,6 +79,17 @@ public sealed class WaveformControl : FrameworkElement
     public double Start => _start;
     public double End => _end;
     public double Duration => _data?.Duration ?? 0;
+    /// <summary>Fades mostrados no gráfico (o áudio é tratado em outro lugar).</summary>
+    public Fade Fade
+    {
+        get => _fade;
+        set
+        {
+            _fade = value;
+            PlaceOverlays();
+        }
+    }
+
     public bool IsDraggingPlayhead => _drag == DragTarget.Playhead;
 
     /// <summary>Posição do cursor em segundos. Ignorada enquanto o usuário o arrasta.</summary>
@@ -189,16 +204,20 @@ public sealed class WaveformControl : FrameworkElement
     /// <summary>Desenha linhas e cursor em x = 0; a posição vem do deslocamento de cada visual.</summary>
     private void DrawOverlays(double w, double waveH)
     {
+        _drawnFade = _fade.FitTo(_end - _start);
+
         // A parte que será removida fica escurecida junto com a própria linha.
         using (var dc = _startVisual.RenderOpen())
         {
             dc.DrawRectangle(DimBrush, null, new Rect(-w, 0, w, waveH));
+            DrawFade(dc, TimeToX(_drawnFade.In), waveH);
             dc.DrawRectangle(StartBrush, null, new Rect(-1, 0, 2, waveH));
             dc.DrawRectangle(StartBrush, null, new Rect(0, 0, HandleWidth, HandleHeight));
         }
         using (var dc = _endVisual.RenderOpen())
         {
             dc.DrawRectangle(DimBrush, null, new Rect(0, 0, w, waveH));
+            DrawFade(dc, -TimeToX(_drawnFade.Out), waveH);
             dc.DrawRectangle(EndBrush, null, new Rect(-1, 0, 2, waveH));
             dc.DrawRectangle(EndBrush, null, new Rect(-HandleWidth, 0, HandleWidth, HandleHeight));
         }
@@ -217,8 +236,48 @@ public sealed class WaveformControl : FrameworkElement
         }
     }
 
+    /// <summary>
+    /// Curva do fade a partir da linha de corte (x = 0) até <paramref name="width"/>
+    /// (negativo para o fade out). A parte do som que é abaixada fica escurecida.
+    /// </summary>
+    private static void DrawFade(DrawingContext dc, double width, double waveH)
+    {
+        if (Math.Abs(width) < 1) return;
+
+        const int steps = 48;
+        double mid = waveH / 2;
+        foreach (int side in new[] { -1, 1 })
+        {
+            double edge = mid + side * mid;
+            var shade = new StreamGeometry();
+            var curve = new StreamGeometry();
+            using (var s = shade.Open())
+            using (var c = curve.Open())
+            {
+                s.BeginFigure(new Point(0, edge), true, true);
+                c.BeginFigure(new Point(0, mid), false, false);
+                for (int i = 0; i <= steps; i++)
+                {
+                    double x = (double)i / steps;
+                    var p = new Point(width * x, mid + side * mid * Audio.Fade.Curve(x));
+                    s.LineTo(p, false, false);
+                    c.LineTo(p, true, true);
+                }
+            }
+            shade.Freeze();
+            curve.Freeze();
+            dc.DrawGeometry(FadeBrush, null, shade);
+            dc.DrawGeometry(null, FadePen, curve);
+        }
+    }
+
     private void PlaceOverlays()
     {
+        // Os fades só são redesenhados quando o tamanho deles muda.
+        double waveH = ActualHeight - RulerHeight;
+        if (_bitmap != null && waveH >= 2 && _drawnFade != _fade.FitTo(_end - _start))
+            DrawOverlays(ActualWidth, waveH);
+
         _startVisual.Offset = new Vector(SnapX(_start), 0);
         _endVisual.Offset = new Vector(SnapX(_end), 0);
         _playheadVisual.Offset = new Vector(SnapX(_playhead), 0);

@@ -19,12 +19,13 @@ Funciona no Windows 10 e 11 de 64 bits.
    - Arraste a linha **verde** (início) e a **vermelha** (fim) na forma de onda.
    - Ou digite o tempo nas caixas (ex.: `01:23,500`) e aperte Enter.
    - Ou leve o cursor branco até o ponto e clique em "Marcar início aqui" / "Marcar fim aqui".
-3. **Ouvir antes de salvar:**
+3. **Fade (opcional):** marque "Fade in no começo" e/ou "Fade out no final" e escolha a duração em segundos. A curva amarela no gráfico mostra o efeito.
+4. **Ouvir antes de salvar:**
    - **Reproduzir / Pausar** toca o áudio a partir do cursor branco. A tecla **Espaço** faz o mesmo.
    - Clique ou arraste em qualquer ponto do gráfico para mover o cursor.
-   - **Ouvir resultado** toca só o trecho que será salvo.
+   - **Ouvir resultado** toca só o trecho que será salvo, com os fades.
    - **Primeiros 3 s** e **Últimos 3 s** servem para conferir as bordas do corte.
-4. **Salvar como…:** o arquivo original nunca é alterado.
+5. **Salvar como…:** o arquivo original nunca é alterado.
 
 ## Formatos
 
@@ -35,6 +36,8 @@ Funciona no Windows 10 e 11 de 64 bits.
 | MP3 → WAV | Decodifica para WAV 16 bits. |
 | WAV → MP3 | Codifica em MP3 (até 192 kbps) usando o codificador do Windows. |
 | Outros (M4A, WMA…) → MP3 ou WAV | Converte usando os codecs do Windows. |
+
+O fade em MP3 → MP3 também não recodifica: muda só o campo de volume dos blocos do trecho com fade, em passos de 1,5 dB.
 
 O formato é reconhecido pelo conteúdo do arquivo, mesmo que a extensão esteja errada.
 Formatos que o Windows não decodifica não abrem, e o programa avisa.
@@ -64,6 +67,7 @@ powershell -ExecutionPolicy Bypass -File tools\make-icon.ps1
 
 - `EditorMP3/`: o aplicativo (C#, WPF, .NET 10)
   - `Audio/AudioTrimmer.cs`: lógica de corte e de salvar
+  - `Audio/Fade.cs` e `Audio/Mp3FrameGain.cs`: fade in e fade out
   - `Audio/AudioSource.cs`: abertura e reconhecimento dos formatos
   - `Audio/PlaybackService.cs`: reprodução da prévia
   - `Controls/WaveformControl.cs`: forma de onda, linhas de corte e cursor

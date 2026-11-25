@@ -2,6 +2,7 @@
 // confere os botões. O áudio tocado é quase inaudível.
 // Uso: dotnet run --project Tests\UiTests [-- pasta-para-imagens]
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -146,6 +147,36 @@ public static class Program
         Click(w.StartHereButton);
         Check("Marcar início depois do fim é recusado", Near(wf.Start, 7) && Near(wf.End, 12), w.StatusText.Text);
 
+        // ----- Fade (opcional) -----
+        wf.SetSelection(5, 16);
+        Check("fade começa desligado", wf.Fade.IsNone && w.FadeInCheck.IsChecked == false && w.FadeOutCheck.IsChecked == false && !w.FadeInBox.IsEnabled);
+        Click(w.PlayResultButton);
+        Check("sem a opção, o resultado toca sem fade", PlayingFade(w) == null);
+        w.FadeInCheck.IsChecked = true;
+        Check("ligar o fade in vale na hora, com 2 s", PlayingFade(w) is { Fade: { In: 2, Out: 0 }, Start: 5, End: 16 } && w.FadeInBox.IsEnabled && !w.FadeOutBox.IsEnabled);
+        w.FadeOutCheck.IsChecked = true;
+        SetBox(w.FadeOutBox, "3,5");
+        Check("mudar a duração do fade out", PlayingFade(w) is { Fade: { In: 2, Out: 3.5 } } && w.ResultText.Text.Contains("fade out 3,5 s"), w.ResultText.Text);
+        Drag(X(16), X(14));
+        Check("o fade acompanha a linha do fim", PlayingFade(w) is { End: > 13.9 and < 14.1 });
+        SetBox(w.FadeOutBox, "abc");
+        Check("duração inválida é recusada", w.FadeOutBox.Text == "3,5" && wf.Fade.Out == 3.5, w.StatusText.Text);
+        Click(w.StopButton);
+        Drag(X(6), X(6));
+        Click(w.PlayPauseButton);
+        Check("Reproduzir toca o áudio original, sem fade", PlayingFade(w) == null);
+        Click(w.StopButton);
+        Click(w.PlayTailButton);
+        Check("Últimos 3 s toca com fade", PlayingFade(w) != null);
+        Click(w.StopButton);
+        wf.SetSelection(5, 8);
+        await Task.Delay(100);
+        Check("fade maior que o trecho é encurtado e avisado", w.ResultText.Text.Contains("encurtado"), w.ResultText.Text);
+        w.FadeInCheck.IsChecked = false;
+        w.FadeOutCheck.IsChecked = false;
+        Check("desligar remove o fade", wf.Fade.IsNone && !w.ResultText.Text.Contains("fade"), w.ResultText.Text);
+        wf.SetSelection(7, 12);
+
         // ----- Fim do arquivo -----
         Drag(X(d) - 1, X(d) - 1);
         Click(w.PlayPauseButton);
@@ -170,12 +201,31 @@ public static class Program
             wf.SetSelection(d * 0.2, d * 0.8);
         }
         Drag(X(d * 0.45), X(d * 0.45));
+        w.FadeInCheck.IsChecked = true;
+        w.FadeOutCheck.IsChecked = true;
+        SetBox(w.FadeInBox, "15");
+        SetBox(w.FadeOutBox, "25");
         await Task.Delay(200);
         Save(w,Path.Combine(dir, "tela-parada.png"));
         w.Width = w.MinWidth;
         w.Height = w.MinHeight;
         await Task.Delay(200);
         Save(w, Path.Combine(dir, "tela-minima.png"));
+    }
+
+    /// <summary>Fade aplicado ao que está tocando agora (estado interno do player).</summary>
+    private static Mp3Editor.Audio.FadeRegion? PlayingFade(MainWindow w)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var player = typeof(MainWindow).GetField("_player", flags)!.GetValue(w)!;
+        var range = player.GetType().GetField("_range", flags)!.GetValue(player);
+        return (Mp3Editor.Audio.FadeRegion?)range?.GetType().GetField("_fade", flags)!.GetValue(range);
+    }
+
+    private static void SetBox(TextBox box, string text)
+    {
+        box.Text = text;
+        box.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
     }
 
     private static string Label(MainWindow w) => (string)w.PlayPauseButton.Content;

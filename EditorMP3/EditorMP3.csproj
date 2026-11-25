@@ -9,7 +9,7 @@
     <RootNamespace>Mp3Editor</RootNamespace>
     <AssemblyName>EditorMP3</AssemblyName>
     <Product>Editor de MP3</Product>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 

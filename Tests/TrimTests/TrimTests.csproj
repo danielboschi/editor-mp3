@@ -11,6 +11,8 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <Compile Include="..\..\EditorMP3\Audio\AudioTrimmer.cs" Link="AudioTrimmer.cs" />
     <Compile Include="..\..\EditorMP3\Audio\AudioSource.cs" Link="AudioSource.cs" />
+    <Compile Include="..\..\EditorMP3\Audio\Fade.cs" Link="Fade.cs" />
+    <Compile Include="..\..\EditorMP3\Audio\Mp3FrameGain.cs" Link="Mp3FrameGain.cs" />
     <Compile Include="..\..\EditorMP3\Audio\WaveformData.cs" Link="WaveformData.cs" />
     <Compile Include="..\..\EditorMP3\TimeFormat.cs" Link="TimeFormat.cs" />
   </ItemGroup>
