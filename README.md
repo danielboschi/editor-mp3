@@ -43,7 +43,7 @@ Em edições "N" do Windows, instale antes o *Media Feature Pack* da Microsoft.
 
 ## Compilar a partir do código
 
-É preciso ter o [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
+É preciso ter o [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
 ```powershell
 # Executar em modo de desenvolvimento
@@ -62,7 +62,7 @@ powershell -ExecutionPolicy Bypass -File tools\make-icon.ps1
 
 ## Estrutura
 
-- `EditorMP3/`: o aplicativo (C#, WPF, .NET 8)
+- `EditorMP3/`: o aplicativo (C#, WPF, .NET 10)
   - `Audio/AudioTrimmer.cs`: lógica de corte e de salvar
   - `Audio/AudioSource.cs`: abertura e reconhecimento dos formatos
   - `Audio/PlaybackService.cs`: reprodução da prévia
